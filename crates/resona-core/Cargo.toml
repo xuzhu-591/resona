@@ -21,7 +21,7 @@ zstd = "0.13"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 dirs = "6"
-ts-rs = { version = "11", features = ["no-serde-warnings"] }
+ts-rs = { version = "12", features = ["no-serde-warnings"] }
 
 [dev-dependencies]
 tempfile = "3"
