@@ -279,7 +279,7 @@ export default function App() {
             {label}
           </button>
         ))}
-        {view !== "popover" && (
+        {view !== "popover" && view !== "settings" && (
           <button
             className={filters.range === "custom" ? "active" : ""}
             onClick={() =>
@@ -361,36 +361,29 @@ export default function App() {
     <main
       className={`app ${view === "popover" ? "popover" : ""} ${view === "settings" ? "settings-window" : ""} ${view === "turns" ? "turns-window" : ""} ${selected && view === "turns" ? "has-detail" : ""}`}
     >
-      {view !== "popover" && (
+      {view !== "popover" && view !== "settings" && (
         <header className="app-header">
           <Brand />
           <nav>
-            {view === "settings" ? (
-              <h3>设置</h3>
-            ) : (
-              <div className="segmented">
-                <button
-                  className={view === "overview" ? "active" : ""}
-                  onClick={() => {
-                    setView("overview");
-                    if (filters.range === "all") updateFilters({ range: "7d" });
-                  }}
-                >
-                  表现概览
-                </button>
-                <button
-                  className={view === "turns" ? "active" : ""}
-                  onClick={() => setView("turns")}
-                >
-                  轮次记录
-                </button>
-              </div>
-            )}
+            <div className="segmented">
+              <button
+                className={view === "overview" ? "active" : ""}
+                onClick={() => {
+                  setView("overview");
+                  if (filters.range === "all") updateFilters({ range: "7d" });
+                }}
+              >
+                表现概览
+              </button>
+              <button className={view === "turns" ? "active" : ""} onClick={() => setView("turns")}>
+                轮次记录
+              </button>
+            </div>
           </nav>
           <button
             className="icon-button"
-            aria-label={view === "settings" ? "返回概览" : "打开设置"}
-            onClick={() => navigate(view === "settings" ? "overview" : "settings")}
+            aria-label="打开设置"
+            onClick={() => navigate("settings")}
           >
             <GearSix size={22} />
           </button>
@@ -803,33 +796,35 @@ export default function App() {
       )}
       {view === "settings" && boot && (
         <div className="settings-layout">
-          <aside className="settings-nav">
-            <button
-              className={settingsTab === "general" ? "active" : ""}
-              onClick={() => setSettingsTab("general")}
-            >
-              <GearSix />
-              通用
-            </button>
-            <button
-              className={settingsTab === "sources" ? "active" : ""}
-              onClick={() => setSettingsTab("sources")}
-            >
-              <FolderOpen />
-              数据来源
-            </button>
-            <div className="settings-version">
-              <img src="/resona-icon.png" width="48" />
-              <strong>Resona</strong>
-              <small>版本 {boot.version}</small>
+          <nav className="settings-nav" aria-label="设置页面">
+            <div className="segmented">
+              <button
+                className={settingsTab === "general" ? "active" : ""}
+                onClick={() => setSettingsTab("general")}
+              >
+                <GearSix />
+                通用
+              </button>
+              <button
+                className={settingsTab === "sources" ? "active" : ""}
+                onClick={() => setSettingsTab("sources")}
+              >
+                <FolderOpen />
+                数据来源
+              </button>
             </div>
-          </aside>
+          </nav>
           <section className="settings-content">
             {settingsTab === "general" ? (
               <>
-                <h1>通用</h1>
-                <p>让回响融入你的工作节奏</p>
-                <h3>启动</h3>
+                <div className="settings-intro">
+                  <Waveform size={36} weight="bold" />
+                  <div>
+                    <h1>让 Resona 适合你的工作节奏</h1>
+                    <p>个性化设置，在菜单栏中获得你关心的性能洞察。</p>
+                  </div>
+                </div>
+                <h3>启动与运行</h3>
                 <div className="setting-row">
                   <div>
                     <strong>登录时启动</strong>
@@ -841,29 +836,31 @@ export default function App() {
                     label="登录时启动"
                   />
                 </div>
-                <h3>菜单栏</h3>
-                <div className="menu-preview">
-                  <Waveform size={20} />
-                  {boot.settings.showProvider ? "cx · " : ""}
-                  {boot.settings.showModel ? "gpt-5.6-sol · " : ""}
-                  {boot.settings.menuMetric === "tps"
-                    ? "21.2 tok/s"
-                    : boot.settings.menuMetric === "both"
-                      ? "7.8s · 21.2 tok/s"
-                      : "7.8s"}
-                  <small>显示样式预览</small>
+                <div className="setting-row">
+                  <div>
+                    <strong>关闭窗口后继续在菜单栏运行</strong>
+                    <small>退出应用时停止采集</small>
+                  </div>
                 </div>
+                <h3>菜单栏</h3>
                 <div className="setting-row">
                   <strong>显示指标</strong>
-                  <select
-                    aria-label="菜单栏指标"
-                    value={boot.settings.menuMetric}
-                    onChange={(e) => void save({ menuMetric: e.target.value })}
-                  >
-                    <option value="ttft">首次响应</option>
-                    <option value="tps">端到端速度</option>
-                    <option value="both">两项指标</option>
-                  </select>
+                  <div className="segmented" role="group" aria-label="菜单栏指标">
+                    {[
+                      ["ttft", "首次响应"],
+                      ["tps", "端到端速度"],
+                      ["both", "两项都显示"],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        aria-pressed={boot.settings.menuMetric === key}
+                        className={boot.settings.menuMetric === key ? "active" : ""}
+                        onClick={() => void save({ menuMetric: key })}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="setting-row">
                   <strong>显示来源</strong>
@@ -881,21 +878,45 @@ export default function App() {
                     label="显示模型"
                   />
                 </div>
-                <h3>外观与默认范围</h3>
+                <div className="setting-row preview-row">
+                  <strong>菜单栏预览</strong>{" "}
+                  <div className="menu-preview">
+                    <Waveform size={20} />
+                    {boot.settings.showProvider ? "cx · " : ""}
+                    {boot.settings.showModel ? "gpt-5.6-sol · " : ""}
+                    {boot.settings.menuMetric === "tps"
+                      ? "21.2 tok/s"
+                      : boot.settings.menuMetric === "both"
+                        ? "7.8s · 21.2 tok/s"
+                        : "7.8s"}
+                    <small>显示样式预览</small>
+                  </div>
+                </div>
+                <h3>外观与默认视图</h3>
                 <div className="setting-row">
                   <strong>主题</strong>
-                  <select
-                    aria-label="主题"
-                    value={boot.settings.theme}
-                    onChange={(e) => void save({ theme: e.target.value })}
-                  >
-                    <option value="system">跟随系统</option>
-                    <option value="dark">深色</option>
-                    <option value="light">浅色</option>
-                  </select>
+                  <div className="segmented" role="group" aria-label="主题">
+                    {[
+                      ["system", "跟随系统"],
+                      ["dark", "深色"],
+                      ["light", "浅色"],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        aria-pressed={boot.settings.theme === key}
+                        className={boot.settings.theme === key ? "active" : ""}
+                        onClick={() => void save({ theme: key })}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="setting-row">
-                  <strong>默认统计范围</strong>
+                  <div>
+                    <strong>默认统计范围</strong>
+                    <small>未从其他页面带入筛选时使用</small>
+                  </div>
                   <select
                     aria-label="默认统计范围"
                     value={boot.settings.defaultRange}
@@ -932,11 +953,26 @@ export default function App() {
                         label={`${provider} 采集`}
                       />
                     </div>
-                    <code>
-                      {provider === "codex"
-                        ? boot.settings.codexHome
-                        : boot.settings.claudeProjects}
-                    </code>
+                    <div className="source-path">
+                      <span>{provider === "codex" ? "Home 目录" : "日志目录"}</span>
+                      <code>
+                        {provider === "codex"
+                          ? boot.settings.codexHome
+                          : boot.settings.claudeProjects}
+                      </code>
+                      <button
+                        onClick={() =>
+                          void api
+                            .select(provider)
+                            .then((s) => {
+                              if (s) setBoot({ ...boot, settings: s });
+                            })
+                            .catch((e) => setError(String(e)))
+                        }
+                      >
+                        选择{provider === "codex" ? " home" : ""}目录
+                      </button>
+                    </div>
                     {boot.sources
                       .filter((s) => s.provider === provider)
                       .map((s) => (
@@ -964,22 +1000,11 @@ export default function App() {
                       <button
                         onClick={() =>
                           void api
-                            .select(provider)
-                            .then((s) => {
-                              if (s) setBoot({ ...boot, settings: s });
-                            })
-                            .catch((e) => setError(String(e)))
-                        }
-                      >
-                        选择{provider === "codex" ? " home" : ""}目录
-                      </button>
-                      <button
-                        onClick={() =>
-                          void api
                             .open(provider === "codex" ? "codexHome" : "claudeProjects")
                             .catch((e) => setError(String(e)))
                         }
                       >
+                        <FolderOpen />
                         打开目录
                       </button>
                       <button
@@ -1012,6 +1037,10 @@ export default function App() {
                 </div>
               </>
             )}
+            <footer className="settings-footer">
+              <span>更改即时保存{desktop ? "" : " · 演示数据"}</span>
+              <span>Resona · {boot.version}</span>
+            </footer>
           </section>
         </div>
       )}
