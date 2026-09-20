@@ -33,3 +33,7 @@ PR descriptions contain **Summary** and **Test plan**. State unrun checks honest
 ## Releases
 
 Maintainers use the [release procedure](docs/releasing.md). A normal contribution must not publish packages, move tags, or modify signing credentials.
+
+## Dependency updates
+
+Dependabot groups minor and patch version updates by ecosystem. Major version upgrades are reviewed deliberately with compatibility checks and are not opened automatically. Security auditing remains part of pull-request CI and the weekly dependency workflow.

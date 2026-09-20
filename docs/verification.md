@@ -6,8 +6,8 @@
 
 | 范围 | 已执行结果 |
 | --- | --- |
-| Rust 核心与桌面工作区 | 34 项测试通过：2 个查询单元测试、28 个采集/重建测试、4 个查询集成测试 |
-| 前端 | 8 项 Vitest 测试通过；TypeScript、ESLint、Prettier 与 Vite 构建通过 |
+| Rust 核心与桌面工作区 | 40 项测试通过：6 个窗口交互/定位测试、2 个查询单元测试、28 个采集/重建测试、4 个查询集成测试 |
+| 前端 | 10 项 Vitest 测试通过；TypeScript、ESLint、Prettier 与 Vite 构建通过 |
 | Rust 代码规范 | rustfmt 与工作区 Clippy（拒绝 warning）通过 |
 | 契约 | Rust 生成 TypeScript 与提交 DTO 一致；SQL 文件与方案内 DDL 一致；版本与 capability 检查通过 |
 | 依赖 | pnpm audit 未发现已知漏洞；本地 cargo-audit 漏洞数据库扫描未发现漏洞，yank 查询因网络超时未完成，远端 CI 另行验证 |
@@ -34,8 +34,8 @@
 
 ## 验证边界
 
-- GitHub CI 已通过 Linux 核心、Apple Silicon 与 Intel 桌面构建以及依赖审计，最终提交状态以 [PR checks](https://github.com/xuzhu-591/resona/pull/1/checks) 为准。
-- 菜单栏状态项的直接鼠标点击因本机自动化工具未暴露该控件，尚无原生自动验收证据；浮层布局与详情跳转已有合成页面验收。
+- GitHub CI 已通过 Linux 核心、Apple Silicon 与 Intel 桌面构建以及依赖审计，最终提交状态以 [PR checks](https://github.com/xuzhu-591/resona/actions/workflows/ci.yml) 为准。
+- 2026-09-21 用户已通过真实菜单栏点击确认浮层展开和定位修复；本地原生事件与窗口坐标读回也已确认展开/失焦路径。右键菜单、Escape 和多显示器仍未形成完整原生自动验收记录；合成页面结果不代替该边界。
 - 最低 macOS 13 的实机安装、Intel 实机运行、多显示器与各类屏幕缩放尚未验证；CI 构建不能替代这些测试。
 - 当前本地包为 ad-hoc 签名，未经过 Apple 公证。正式公开 DMG 需要 Developer ID 及公证凭据，发布流程缺凭据时失败，不自动降级。
 - 首版只有 schema v1，遇到未来数据库版本会拒绝启动；完整跨 schema 大版本升级尚无实际版本对可测。
