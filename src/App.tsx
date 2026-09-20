@@ -956,7 +956,7 @@ export default function App() {
                                 ? "未发现目录"
                                 : s.state === "paused"
                                   ? "已暂停"
-                                  : "读取异常"}
+                                  : `部分记录异常 · ${s.errorFiles} 个文件`}
                           </small>
                         </div>
                       ))}

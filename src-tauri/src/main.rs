@@ -246,12 +246,12 @@ fn show(
     }
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
-    window
-        .emit(
-            "resona://navigate/v1",
-            serde_json::json!({"destination":destination,"context":payload}),
-        )
-        .map_err(|e| e.to_string())
+    app.emit_to(
+        label,
+        "resona://navigate/v1",
+        serde_json::json!({"destination":destination,"context":payload}),
+    )
+    .map_err(|e| e.to_string())
 }
 #[tauri::command]
 fn navigate_v1(
