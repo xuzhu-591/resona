@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/resona-core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+repository = "https://github.com/xuzhu-591/resona"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+# Keep host proc-macro metadata intact for the macOS dynamic loader.
+[profile.release.build-override]
+strip = false

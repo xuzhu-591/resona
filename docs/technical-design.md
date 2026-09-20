@@ -127,8 +127,8 @@ flowchart LR
 ```
 
 - 只有 Rust 可以访问日志与统计数据库；前端只拿 DTO。禁用前端任意文件访问和任意 shell 执行能力。
-- 一个写线程串行维护 SQLite；文件读取/解析最多 2 个 worker，单次提交不超过 1,000 条事实或 50ms 处理预算，防止历史回放挤占当前追加。
-- 所有写操作包含事实、读取偏移、reducer 状态、轮次投影和 data_revision 的原子提交。崩溃后从最后一次完整提交继续。
+- 一个后台写线程串行读取、解析和维护 SQLite；每文件每批最多 1,000 行，每 tick 最多 24 个文件或约 180ms 读取预算。长文件剩余批次进入续读队列。重算按受影响的 thread/base/共享 turn 依赖分量进行，SQL 查询先去重 turn ID，避免事件交叉匹配放大。
+- 事实、occurrence、文件偏移和 durable dirty 标记在同一事务提交；轮次投影与 data_revision 在第二个事务发布。任何已推进偏移都对应可重放事实与未完成意图；启动先恢复 dirty 分量。UI 只读取完整发布的投影 revision。
 - 查询使用独立只读连接（最多 2 个）与短读事务。一次概览命令内读取同一 revision 与截止时间，避免两图数值来自不同快照。
 - WAL 用于 Resona 自己的库；源文件只读。退出时停止调度、完成当前小事务、关闭连接；不强行修改源工具进程。
 
@@ -154,19 +154,19 @@ flowchart LR
 | 场景 | 行为 |
 | --- | --- |
 | 首次启动 | 优先发现近期活跃文件，同时分批补全两类 Codex 根目录和 Claude 根目录；直到所有可读候选完成，显示“历史整理中，统计尚不完整” |
-| 正常追加 | FSEvents 唤醒、250ms 去抖；读取到最后一个完整 LF，不推进半行尾部 |
+| 正常追加 | FSEvents 合并唤醒，后台 tick 消费通知；读取到最后一个完整 LF，不推进半行尾部 |
 | 通知丢失 | 5 秒检查近期变化/有 pending 的文件；60 秒重新遍历目录发现新文件与移动，归档目录同样补扫 |
-| 文件移动 | 先按 device+inode 关联；再按规范 rollout ID 与内容校验关联。旧路径消失不删除历史 |
+| 文件移动 | 新路径重新读取并按规范 rollout ID/语义事实去重，device+inode 用于检测同路径替换；旧路径消失不删除历史 |
 | 重新出现 | 核对已提交边界的 prefix/checkpoint 指纹，匹配才复用偏移 |
 | 截断、同路径重建 | 新 generation，从头重新读；不先清空已发布轮次，待候选重建后替换 |
 | zstd | 流式解压，偏移针对解压后的原始字节。冷文件无变化跳过；变化后从压缩流头解码到检查点，不将压缩字节位置当 JSONL offset |
-| plain/zstd 并存 | plain 优先用于追加，但核对两者解码前缀；相同事件只入库一次。分歧保留证据并标记 conflict，不选择“更大的那个” |
+| plain/zstd 并存 | 分别只读解析两种表示并核对语义事实；相同事件只入库一次。分歧保留证据并标记 conflict，不选择“更大的那个” |
 | 休眠恢复 | 立即补扫并恢复被合并的事件；不假装睡眠期间实时采集 |
 | 单文件错误 | 记录文件级失败，其他文件继续；目录一轮遍历结束不等于全部采集成功 |
 | 超大 JSONL 行 | 流式丢弃不需要的大文本；实现仍需上限（默认单行 16MiB）；超限跳到 LF 并标记该片段不完整，不记作成功解析 |
-| 文件内容被改写且不在采样指纹覆盖区 | 定期滚动校验已解析文件（一天内轮转覆盖）；首次导入与表示切换做完整解码校验。事件流本身按追加式协议处理，不宣称瞬时检测任意原地篡改 |
+| 文件内容被改写且不在采样指纹覆盖区 | 已成功检查超过一天的文件切换新 generation 完整重读；首次导入与表示切换同样完整解码校验。事件流本身按追加式协议处理，不宣称瞬时检测任意原地篡改 |
 
-调度维护每个根的 scan_epoch、每个文件成功位置和失败状态；未发现的可选来源是 missing，不是全局故障。首次初始化完成的判定包含“本轮候选文件均成功或明确被排除”，不把读失败当已覆盖。
+调度维护根状态、每个文件成功位置、mtime/inode/指纹、generation 与失败状态；未发现的可选来源是 missing，不是全局故障。首次初始化完成的判定包含“本轮候选文件均成功或明确被排除”，不把读失败当已覆盖。
 
 ## 5. 身份模型与多 rollout 算法
 
@@ -314,25 +314,22 @@ rollout_cursors.state_json 仅包含 open turn ID 集合、已确认模型、上
 
 ```mermaid
 sequenceDiagram
-  participant F as 文件Reader
-  participant P as Adapter
+  participant F as 只读文件Reader
   participant W as 单写者
   participant DB as Resona SQLite
   participant U as UI
-  F->>P: 完整行与解码字节位置
-  P->>W: 白名单事实 + 文件代际 + 配置revision
-  W->>DB: BEGIN IMMEDIATE
-  W->>DB: 检查配置/文件代际仍有效
-  W->>DB: 写facts与occurrences
-  W->>DB: 重算受影响turn与reducer状态
-  W->>DB: 提交文件offset与data_revision
-  W->>DB: COMMIT
+  F->>W: 完整行的白名单事实与原始字节边界
+  W->>DB: BEGIN：写facts、occurrences、generation、offset、dirty
+  W->>DB: COMMIT：持久化事实与重建意图
+  W->>W: 恢复lineage，确定性重算受影响分量
+  W->>DB: BEGIN：替换受影响投影，递增revision，清dirty
+  W->>DB: COMMIT：原子发布新快照
   W-->>U: data-changed(revision)
 ```
 
-读完但未提交时崩溃会重读；提交后的重读命中唯一键。输出 tokens 不是在扫描时不可逆加到 turns，而是在证据集合上确定性计算。物理文件半行、解析错误或进程退出都不能出现“偏移已推进但轮次没落库”。
+第一事务前中断会重读；两事务之间中断会在启动时恢复 dirty。第二事务与 revision 一起提交，界面不会读到一半新投影。输出 tokens 始终由证据重算，不能在扫描时不可逆地追加到 turns。独立 WAL 只读连接保证历史整理不持有 UI 查询锁。
 
-选择 canonical 时，先按 lineage 恢复同一 turn 的一条有序执行轨迹，引用前缀的事实 ID 只出现一次。多个复制流给出相同轨迹视为同证据；完整明确证据优先于部分/legacy。不能把两条候选轨迹各自的 token 总数相加。相同质量候选的终态或计数不兼容时，将该指标置 N/A 并标 conflict，保留证据供诊断。发现身份冲突后不能继续把旧投影当可信汇总；修复后重新发布。
+canonical 选择先恢复 lineage；同 native turn 的复制流是替代证据，不能相加。完整明确证据优于 partial/legacy；同质量的 owner、TTFT 或计数不兼容时标 conflict，并将性能指标置 N/A。旧代际事实保留，重算仅使用当前物理 generation 的 occurrence。
 
 ### 7.3 重解析与迟到数据
 
@@ -340,7 +337,7 @@ sequenceDiagram
 
 跨 schema/解析器大版本重建在 staging 新库进行。旧库继续提供只读快照并明确显示重建中；候选库通过约束与固定 Case 后，暂停新写入、补齐 cutoff 后的追加、checkpoint 并关闭所有连接，再原子切换数据库文件。不能在 WAL 连接仍打开时 rename 单个 db 文件。失败保留旧库，绝不把旧 WAL 拼到新库。
 
-同 schema 的解析器更新先尝试从旧 allowlist facts 重建；字段不足时重读源日志。源已删除则保留旧版本投影并标历史数据未重算，不把它伪装成最新解析结果。
+同 schema 的解析器更新将 source_files 标为 new，按新 generation 重读源日志，旧 facts 不删除。新的投影与版本原子发布；未能重读的旧解析版本仍可查，查询层把它标为 unresolved，并排除在当前版本可信统计之外。
 
 源目录切换时旧 source_roots.selected=0、enabled=0，保留历史；新根 selected=1，按用户启用状态采集。同一 provider/kind 最多一个 selected 根。待处理批次携带 config_revision，提交时发现失效便丢弃，避免旧目录工作在新配置下继续推进。
 
@@ -350,64 +347,38 @@ sequenceDiagram
 
 Rust 解析时间范围；前端传范围语义，不自行计算时区边界。今天=系统本地零点到 asOf；24h/7d=滚动持续时间；自定义按本地自然日处理 DST，历史结束日为下一日零点的开区间，今天截止 asOf。内部统一 `[startAtMs,endExclusiveMs)`，当前范围 endExclusive=asOf+1，包含恰好 asOf 的毫秒记录。
 
-所有命令返回 snapshot：dataRevision、asOfMs、resolvedRange、coverage。UI 以 requestId 丢弃旧请求结果；同一概览的卡片、双分布、模型汇总一次性更新。缺失根、错误文件、尚未整理完成、legacy 残留分别列入 coverage，不合并成一个含糊“正常”。
+概览返回 dataRevision、asOfMs、startAtMs、endExclusiveMs、sources、scanning 和汇总；列表返回 dataRevision、total、items、nextCursor。React effect 的生命周期丢弃过期响应，同一概览的卡片、双分布、模型汇总一次更新。来源状态分别显示缺失目录、错误文件和暂停，整理中显示横幅，未计入可信统计数量单独显示。
 
 图表数据量规则：
 
 | 内容 | 规则 |
 | --- | --- |
-| 轮次列表 | 默认 20、最大 100；keyset cursor 带排序键、provider/turn_key、筛选摘要与 dataRevision |
+| 轮次列表 | 默认 20、最大 100；cursor 包含偏移、筛选/排序/页大小摘要、固定 asOf 与 dataRevision；revision 不同拒绝继续，从而保证该快照内偏移稳定 |
 | 趋势 | 最多 1,500 个原始点；超过时按时间分箱，最多 240 桶，每桶返回有效 n、p50、慢端分位、起止时间 |
 | 分布 | 每项最多 600 个原始点；超过时使用最多 48 个横轴箱，返回实际 count，点/箱模式明确区分 |
 | 总分位数 | 始终按完整有效原始样本，不因绘图抽稀而变化 |
 | 模型列表 | 按来源+模型稳定排序；样本量与 N/A 数独立返回 |
-| 统计计算 | 普通范围在 Rust 用紧凑数值向量；超过 64MiB 预算切换 SQLite COUNT + 有序游标按目标秩取值，保持同一读事务，不近似分位数 |
-| 读任务 | 放入 blocking worker，可取消尚未执行的旧查询；完成后若请求已过期，结果不发布 |
+| 统计计算 | SQLite 先筛选字段；Rust 每样本 32 字节数值记录，模型字符串按组驻留；完整值精确排序求分位，不复制完整 Turn。列表在 SQLite COUNT/LIMIT/OFFSET，最多返回 100 个完整 Turn。百万轮已做专门基准；更大规模仍按样本量线性使用内存，64MiB 硬上限及外部排序不作为首版已实现能力 |
+| 读任务 | 放入 blocking worker，最多 2 个并发读快照；完成后若请求已过期，结果不发布 |
 
 排序为空值末尾，并以 provider/turn_key 打破并列。对变化数据的分页，cursor revision 与当前不同则返回 STALE_CURSOR；前端保留当前页并提示数据已更新，由用户刷新，不自动跳回第一页。不在读取过程中把一半新样本插进现有列表。
 
-跨天、系统时区改变和唤醒使相对范围缓存失效；截止时间和 dataRevision 都进入缓存键，不能没有新 turn 就永远不滚动 24h 窗口。归档动作本身不改变指标版本，但源状态变化仍触发健康信息刷新。
+可见窗口定期重新获取范围快照，跨天/时区改变后按当前系统时区重新解析；隐藏窗口停止非必要请求。归档动作本身不改变指标版本，但源状态变化仍触发健康信息刷新。
 
 ### 8.2 IPC 总则
 
 不创建本地 HTTP 服务。Rust 导出 typed commands，使用 serde camelCase DTO 与 ts-rs 生成 TS；命令名称携带 v1。查询参数与窗口事件均版本化。发行版 capability 仅授予应用内部窗口需要的动作，不允许前端传任意 SQL、命令或文件路径执行。
 
-核心 DTO：
+DTO 的单一来源为 `crates/resona-core/src/model.rs`，`ts-rs` 输出 `src/api/types.ts`；`pnpm check:types` 在 CI 中比较重新生成的内容。Tauri invoke 成功直接返回 DTO，失败返回 Promise rejection 的错误字符串，首版不额外包装 Envelope/requestId。
 
 ```ts
-type Provider = "codex" | "claude";
-type RangeSpec =
-  | { kind: "today" | "24h" | "7d" }
-  | { kind: "custom"; startDate: string; endDate: string }
-  | { kind: "all" }; // 仅轮次列表
 type Filters = {
-  range: RangeSpec;
-  providers: Provider[]; // 空数组表示全部已知来源
-  models: Array<{ provider: Provider; model: string | null }>;
+  range: string; // today | 24h | 7d | custom；all 仅列表
+  providers: string[];
+  model?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
 };
-type TurnRef = { provider: Provider; turnKey: string };
-type Snapshot = {
-  dataRevision: number;
-  asOfMs: number;
-  resolvedRange: { startAtMs: number | null; endExclusiveMs: number };
-  coverage: {
-    state: "building" | "ready" | "partial";
-    pendingFiles: number;
-    errorFiles: number;
-    unresolvedTurns: number;
-    legacyTurns: number;
-    missingSources: string[];
-  };
-};
-type ApiError = {
-  code: string;
-  message: string;
-  retryable: boolean;
-  requestId: string;
-};
-type Envelope<T> =
-  | { ok: true; apiVersion: 1; requestId: string; data: T }
-  | { ok: false; apiVersion: 1; error: ApiError };
 ```
 
 时间戳以 UTC epoch ms 存储与传输，前端只做显示；原始来源的秒字段在 adapter 中转换。持续时间与 output_tokens 为数值或 null，不传格式化字符串。所有可选指标 JSON null，对应 UI N/A。暂不跨超过 JS 安全整数的数值；native 使用 i64并检查安全范围，异常值为质量错误。
@@ -416,34 +387,27 @@ type Envelope<T> =
 
 | 命令 | 输入 | 输出与作用 |
 | --- | --- | --- |
-| bootstrap_v1 | requestId | 设置、源状态、最近完成、活动轮次、版本、初始化进度；不会等待全量回放完成 |
-| get_dashboard_v1 | requestId, filters, trendMetric | snapshot、总汇总、模型汇总、趋势、两项分布；all 范围无效 |
-| get_recent_v1 | requestId, limit≤10 | 全局最近终态轮次与最新完成；不受浮层统计筛选影响 |
-| list_turns_v1 | requestId, filters, status, searchId, sort, pageSize, cursor | snapshot、状态计数、items、nextCursor |
-| get_turn_v1 | requestId, TurnRef | 单轮数值、字段质量/来源、可复制身份；不返回原始事件正文 |
-| get_settings_v1 | requestId | 当前配置、revision、OS 实际登录项状态、只读 storageDirectory |
-| patch_settings_v1 | requestId, expectedRevision, typed patch | 验证、执行副作用、保存后返回新的完整设置；拒绝 dataDir/dbPath |
-| select_source_directory_v1 | requestId, provider | 后端打开目录对话框；Codex 选 home，Claude 选 projects；取消不变更 |
-| set_source_enabled_v1 | requestId, provider, enabled, expectedRevision | 成对更新 Codex active/archive 或更新 Claude，撤销/恢复 watcher |
-| check_source_v1 | requestId, provider | 启动一次受限增量检查，返回 jobId；进度事件与 source status 回读 |
-| open_directory_v1 | requestId, target enum | 仅打开 storage/codexHome/codexActive/codexArchive/claudeProjects 的已配置目录 |
-| copy_identifier_v1 | requestId, TurnRef, field enum | 从存储取完整 ID 写入剪贴板，不信任 UI 截断值 |
-| navigate_v1 | requestId, destination, filters?, turn? | 创建/聚焦受控窗口，传入导航上下文 |
-| quit_v1 | requestId | 正常停采、提交当前事务并退出 |
+| bootstrap_v1 | 无 | 设置、源状态、recent、active、版本、scanning；读 OS 实际登录项状态 |
+| get_dashboard_v1 | filters | 完整样本汇总、模型汇总、points、ttftBins/tpsBins、trendBuckets；all 无效 |
+| list_turns_v1 | request：filters/status/search/sort/pageSize/cursor | dataRevision、total、items、nextCursor |
+| get_turn_v1 | provider、turnKey | 单轮指标、质量、可复制身份；无正文 |
+| patch_settings_v1 | settings（包含 expected revision） | 先校验 revision，再同步 OS 副作用，保存并返回新的完整配置；未知字段拒绝 |
+| select_source_directory_v1 | provider | 原生目录选择、可读验证和保存；取消返回 null |
+| check_source_v1 | 无 | 请求重新发现和增量检查；通过 bootstrap/sources 回读结果 |
+| open_directory_v1 | target | 仅 storage/codexHome/codexActive/codexArchive/claudeProjects 白名单 |
+| copy_identifier_v1 | provider、turnKey、field | 从数据库取完整 ID 写剪贴板 |
+| navigate_v1 | destination、context | 聚焦已创建的受控窗口，传 filters/turn 上下文 |
+| hide_popover_v1 | 无 | 收起菜单栏浮层 |
+| window_visible_v1 | Tauri 注入当前窗口 | 判断该窗口是否可见，用于停止隐藏窗口轮询 |
+| quit_v1 | 无 | 停止采集调度，完成正在执行的写工作后退出 |
 
 source directory 的预验证和提交保持在后端同一次操作中：路径可读但暂无日志允许保存；目录不存在/权限失败不替换旧配置。选 Codex home 后自动派生两个根，不能只改变 active 仍遗留另一个 archive 位置。读到 path 变为 symlink 或权限改变时可再次失败，返回真实状态，不承诺预验证保证未来永不失败。
 
 ### 8.4 事件与错误
 
-事件：
+事件采用 `resona://.../v1`：data-changed 携带 dataRevision；settings-changed 携带 settingsRevision；source-state 提示状态可回读；navigate 携带 destination/context。首版没有通用 job API。bootstrap 的 scanning 与每个 SourceStatus 是整理完成和来源健康的依据。
 
-- `resona://data-changed/v1`：dataRevision + affectedScopes；500ms 合并发布，不传整个数据库。
-- `resona://source-state/v1`：provider、root 状态、最近成功时间、错误码。
-- `resona://job-progress/v1`：jobId、phase、done/totalKnown、complete/error。
-- `resona://settings-changed/v1`：settingsRevision。
-- `resona://navigate/v1`：目标窗口、入口上下文，窗口 ready 后再发送或从 bootstrap 拉取。
-
-错误码至少包括 INVALID_ARGUMENT、SOURCE_NOT_FOUND、SOURCE_UNREADABLE、LINEAGE_INCOMPLETE、IDENTITY_CONFLICT、DB_BUSY、DB_CORRUPT、SCHEMA_TOO_NEW、STALE_CURSOR、SETTINGS_CONFLICT、OS_INTEGRATION_FAILED。文件错误显示 basename 和简短原因，禁止透出日志正文。不能把 `ok=true` 当成采集完成，必须回读 job 的 complete 和 coverage。
+参数、分页、配置和持久化边界分别返回 INVALID_ARGUMENT、INVALID_RANGE、INVALID_DATE_RANGE、INVALID_CURSOR、STALE_CURSOR、SETTINGS_CONFLICT、TURN_NOT_FOUND、SCHEMA_TOO_NEW 等错误。来源解析错误仅展示文件名和通用说明；不透出原始 JSON 行。UI 为质量码提供中文解释，未知指标显示 N/A。
 
 ## 9. 桌面窗口、设置与可访问性
 
@@ -455,7 +419,7 @@ source directory 的预验证和提交保持在后端同一次操作中：路径
 - 开机启动使用 Tauri autostart 的 macOS LaunchAgent 方式；启动参数 `--background` 仅决定不弹窗。启用先注册并读回，再保存设置；失败恢复旧配置。每次 bootstrap 读取 OS 实际状态，不只信数据库愿望值。
 - 输入目录默认首次从实际进程 CODEX_HOME（存在时）解析，否则 `~/.codex`；GUI 不继承 shell 的变量时不会猜 NVM/zsh 配置，用户可在数据来源选 home。选择后持久化，以明确设置为准。
 - 键盘可到达筛选、列表行和按钮；焦点可见，颜色以文字/形状补充；图表提供可读值和列表路径。主题 tokens 覆盖深/浅/system，遵循系统减少动态效果设置。
-- 采集与 SQL 不运行在 WebView/UI 主线程；列表虚拟化，隐藏窗口暂停图表动画与非必要请求。
+- 采集与 SQL 不运行在 WebView/UI 主线程；列表每页最多 100 行，隐藏窗口暂停图表动画与非必要请求。
 
 ## 10. 契约变更与影响
 
@@ -479,13 +443,13 @@ source directory 的预验证和提交保持在后端同一次操作中：路径
 | 无数据 | N/A | 无变化；已知真实 0 与未知明确区分 |
 | 失败/子代理 | 支持不完整 | 明确排除子代理和失败样本；范围差异在迁移报告中列出 |
 
-解析器版本初始 `codex-claude-v1`，指标版本 `resona-v1`，schema=1，IPC=1，各自独立。schema 变化走迁移；解析器修复按依赖重建；UI 绘图变化只失效查询/渲染缓存。不得只改一个版本号却不触发所需回放。
+解析器版本初始 `codex-claude-v2`，指标版本 `resona-v1`，schema=1，IPC=1，各自独立。schema 变化走迁移；解析器修复按依赖重建；UI 绘图变化只失效查询/渲染缓存。不得只改一个版本号却不触发所需回放。
 
 ### 10.3 数据库与持久化契约
 
 新库结构见下面完整 SQLite DDL。旧库不执行这些 DDL。启动先检查 user_version，支持 schema=0 创建、schema=1 正常打开；更高版本返回 SCHEMA_TOO_NEW，不能盲目降级。创建脚本在一次事务内执行，重复启动不会重复运行 CREATE。
 
-应用设置在目标 DDL 初始化后填真实更新时间；source_roots 用绑定参数写入用户实际目录，不能把本机用户名硬编码进 migration。schema_migrations.script_id 是不可变脚本标识；发布构建另外校验 migration 文件内容哈希，避免已发布脚本被改写。
+应用设置在初始化后填真实更新时间；source_roots 用绑定参数写入实际目录。schema_migrations.script_id 是脚本标识；CI 核对文档内嵌 DDL 与执行脚本逐字一致。schema=1 发布后不修改既有 migration，后续变化增加顺序版本。
 
 DDL 使用 SQLite bundled 的 JSON 检查能力。外键对 identity 未知的 base 不做强制存在约束，以允许父文件晚到；必须通过 lineage_status 明确表现缺失。事务重算与业务唯一性由写者维护，SQL 约束负责阻止重复 canonical turn、重复表示和非法数值。
 
@@ -712,7 +676,7 @@ CREATE TABLE legacy_rows (
 INSERT INTO app_settings VALUES
   (1, 1, 0, 0, 'ttft', 1, 0, 'system', 'today', 0);
 INSERT INTO app_meta VALUES ('data_revision', '0');
-INSERT INTO app_meta VALUES ('parser_version', '"codex-claude-v1"');
+INSERT INTO app_meta VALUES ('parser_version', '"codex-claude-v2"');
 INSERT INTO app_meta VALUES ('metric_version', '"resona-v1"');
 INSERT INTO app_meta VALUES ('bootstrap_state', '"not_started"');
 INSERT INTO schema_migrations VALUES
@@ -751,7 +715,7 @@ COMMIT;
 
 存在时以 read-only 方式打开，使用 SQLite Backup API 建立一致性临时副本放入 ~/.resona/staging。必须包含 WAL 已提交内容，不能只复制 monitor.db 文件，也不能对变化中的 WAL 数据库使用 immutable=1 当“只读捷径”。读取失败返回具体状态并继续从原日志构建新数据，不能创建或修改旧库。
 
-import_id 由副本内容摘要与旧 schema 指纹组成；重复启动或点击重试不再重复插入同一 legacy 行。没有旧库则直接正常回放。
+import_id 为一致性副本的 SHA256（副本包含旧 schema）；重复启动或点击重试不再重复插入同一 legacy 行。没有旧库则直接正常回放。
 
 ### 11.2 导入顺序与覆盖规则
 
@@ -1046,7 +1010,7 @@ flowchart LR
 
 发现发布问题时，先撤下有问题版本的推荐下载/latest 指向，保留版本记录并注明原因；发布修正 patch，不能移动旧 tag 悄悄换包。应用版本回滚继续遵守第 13.4 节的数据兼容规则，不能因为安装了旧 app 就自动降级新 schema。首版没有自动更新后台任务，恢复项只有用户已开启的登录启动与采集任务。
 
-开源工程交付验收包括：新贡献者无需生产凭据可 clone/install/check/build；fork PR 正常跑 CI；故意不一致的版本或缺失 Changelog 能阻止发布；任一架构失败不产生公开半成品；签名包下载后可安装且固定目录中历史保留。上述是待实现验收项，本次只更新方案，未创建 GitHub 仓库、workflow 文件、证书、Release 或新的应用代码。
+开源工程交付验收包括：新贡献者无需生产凭据可 clone/install/check/build；fork PR 正常跑 CI；故意不一致的版本或缺失 Changelog 能阻止发布；任一架构失败不产生公开半成品；签名包下载后可安装且固定目录中历史保留。各项实际执行状态以 `docs/verification.md` 为准；构建、CI、安装与签名公证分别记录，不把本地 ad-hoc 包视为已公证正式制品。
 
 ## 15. 开发拆分与评审结论入口
 
@@ -1058,7 +1022,7 @@ flowchart LR
 | D | 五个已选页面、窗口和系统设置 | 视觉、键盘、错误状态及主流程验收 |
 | E | 双架构打包、签名公证、Draft Release、登录启动与实际对账 | 固定制品通过下载及升级验收；明确区分待发布与已公开发布 |
 
-当前等待的是本技术方案评审，不是再次选择技术栈或重新讨论已确认产品风格。
+产品与技术方案已确认；开发、验证、发布和本地安装已获得用户授权。正式外部分发需要 Developer ID 与公证凭据。
 
 ## 附录 A：证据来源
 
@@ -1069,7 +1033,7 @@ flowchart LR
 - 开源发布资料（2026-09-20 读取）：[Tauri GitHub Actions](https://v2.tauri.app/distribute/pipelines/github/)、[macOS 签名与公证](https://v2.tauri.app/distribute/sign/macos/)、[macOS application bundle](https://v2.tauri.app/distribute/macos-application-bundle/)、[GitHub runner-images](https://github.com/actions/runner-images)。runner 和 SDK 版本随上游变化，初始化 workflow 时再次确认。
 - 本机样本只读检查只用于确认字段结构与目录形态；不把任何真实消息内容复制进新项目。
 
-## 附录 B：本次验证记录
+## 附录 B：方案阶段验证记录（历史）
 
 2026-09-20，使用 Python sqlite3（SQLite 3.54.0）在 `:memory:` 执行建库脚本，未创建 `~/.resona` 运行时数据库，未迁移真实数据。
 
@@ -1085,3 +1049,12 @@ flowchart LR
 | 开源补充后的复核 | 15 个主章节编号连续，3 份文档链接/代码围栏有效；技术方案无维护者本机绝对路径与内部邮箱/文档引用；DDL 再次通过内存 SQLite 执行、完整性与外键检查，与独立 SQL 逐字一致 |
 
 第 12 节的 34 个应用验收 Case、Rust/React 检查、性能目标和 macOS 实机验收均尚未执行，需在技术方案通过并实现后验证。本次约束校验不证明解析算法或桌面行为已经实现。
+
+## 附录 C：实现收敛说明
+
+首版实现采用事实/dirty 与投影/revision 两阶段事务，已覆盖两事务之间的恢复测试。IPC 采用 Tauri 原生 Result 和生成 DTO，未添加额外 Envelope。分页在固定 revision/asOf 内使用带筛选摘要的偏移游标。百万轮查询改用紧凑数值样本和 SQL 分页；更大的数据量尚未实现 64MiB 硬内存预算。以上内部调整不改变统计公式、双源范围、已选页面或固定本地目录。
+
+
+### 投影版本补充
+
+`app_meta.projection_version` 保存 reducer 与 metric 的组合版本。启动发现版本不一致时，在同一事务中写入新版本并将全部 rollout cursor 标 dirty；后台恢复从保留事实重建投影，崩溃后继续恢复。成功提交投影后更新 cursor.reducer_version 与 data_revision。此变动复用已有表，无新增 DDL。相对时间范围在窗口可见时至少每分钟刷新。

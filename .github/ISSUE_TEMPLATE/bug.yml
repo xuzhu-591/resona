@@ -1,0 +1,21 @@
+name: Bug report
+description: Report an observable problem with Resona
+title: 'fix: '
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Resona version, macOS version, and CPU architecture
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Source tool and version
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction, expected behavior, and actual behavior
+      description: Use synthetic data. Do not attach private session logs or credentials.
+    validations:
+      required: true

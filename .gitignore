@@ -1,0 +1,14 @@
+/target/
+/node_modules/
+/dist/
+/qa-artifacts/
+/test-results/
+/playwright-report/
+/design-qa.md
+.DS_Store
+*.p12
+*.p8
+*.key
+.env*
+*.sqlite3*
+*.db*
