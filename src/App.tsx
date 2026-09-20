@@ -14,7 +14,7 @@ import {
   Waveform,
 } from "@phosphor-icons/react";
 import * as Switch from "@radix-ui/react-switch";
-import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { api, desktop } from "./api/client";
 import type { Bootstrap, Dashboard, Filters, Settings, Turn, TurnPage } from "./api/types";
@@ -169,16 +169,16 @@ export default function App() {
   }, [filters, stateFilter, search, sort, cursor, view, refresh]);
   useEffect(() => {
     if (!desktop) return;
-    const p = listen<{ destination: string; context?: { filters?: Filters; turn?: Turn } }>(
-      "resona://navigate/v1",
-      (e) => {
-        setView(e.payload.destination);
-        if (e.payload.context?.filters) setFilters(e.payload.context.filters);
-        if (e.payload.context?.turn) setSelected(e.payload.context.turn);
-        setCursor(null);
-        setHistory([]);
-      },
-    );
+    const p = getCurrentWebviewWindow().listen<{
+      destination: string;
+      context?: { filters?: Filters; turn?: Turn };
+    }>("resona://navigate/v1", (e) => {
+      setView(e.payload.destination);
+      if (e.payload.context?.filters) setFilters(e.payload.context.filters);
+      if (e.payload.context?.turn) setSelected(e.payload.context.turn);
+      setCursor(null);
+      setHistory([]);
+    });
     return () => {
       void p.then((f) => f());
     };
