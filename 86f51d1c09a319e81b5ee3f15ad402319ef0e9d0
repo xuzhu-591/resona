@@ -1,0 +1,30 @@
+crates/resona-core/src/storage.rs
+  6fd2e272fa8985dc 1-4,6-10,25-34,38-63,74-83,87,125-126,160,170-247,249-297,299-306,316-325,331-334,353-374,384-403,416-431,456-459,461-463,465-512,520-521,523-540,548-551,553-557,560-572,574-582,586-592,594-595,597-604,606-612,615,648,668,672-673,675-679,681,683-685,692-695,703-728,758-783,786-791,794-822,843
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8-ntes.9.preview.3",
+  "base_commit_sha": "86f51d1c09a319e81b5ee3f15ad402319ef0e9d0",
+  "prompts": {
+    "6fd2e272fa8985dc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0bdc3-9696-7502-b532-3113a5009ba4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Xu Zhu <xu.zhu.hi@outlook.com>",
+      "messages": [],
+      "total_additions": 548,
+      "total_deletions": 0,
+      "accepted_lines": 502,
+      "overriden_lines": 50,
+      "per_file_stats": {
+        "crates/resona-core/src/storage.rs": {
+          "additions": 548,
+          "accepted_lines": 502,
+          "overriden_lines": 50
+        }
+      }
+    }
+  }
+}
