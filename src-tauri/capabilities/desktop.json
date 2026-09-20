@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Resona local windows",
+  "windows": ["popover", "details", "settings"],
+  "permissions": ["core:default"]
+}

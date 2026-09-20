@@ -1,0 +1,47 @@
+{
+  "name": "resona",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "tauri dev",
+    "dev:web": "vite --host 127.0.0.1",
+    "build:web": "tsc --noEmit && vite build",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "format": "prettier --write src scripts *.json *.ts",
+    "check:frontend": "prettier --check src scripts *.json *.ts && eslint src && tsc --noEmit && vitest run && vite build",
+    "check:core": "cargo fmt --all -- --check && cargo clippy -p resona-core --all-targets --locked -- -D warnings && cargo test -p resona-core --all-targets --locked",
+    "check:desktop": "cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --all-targets --locked",
+    "check:contracts": "node scripts/check-contracts.mjs",
+    "check": "pnpm check:frontend && pnpm check:core && pnpm check:contracts",
+    "types:generate": "node scripts/check-types.mjs --write",
+    "check:types": "node scripts/check-types.mjs"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
+    "@radix-ui/react-switch": "^1.2.6",
+    "@tauri-apps/api": "^2.10.1",
+    "echarts": "^6.0.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1",
+    "vite": "^6.4.1",
+    "vitest": "^4.1.11"
+  }
+}

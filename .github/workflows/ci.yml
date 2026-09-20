@@ -1,0 +1,111 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:frontend
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: '1.95.0'
+      - run: pnpm check:contracts
+      - run: pnpm check:types
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: '1.95.0'
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy -p resona-core --all-targets --locked -- -D warnings
+      - run: cargo test -p resona-core --all-targets --locked
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: '1.95.0'
+          targets: ${{ matrix.target }}
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:web
+      - run: pnpm check:desktop
+      - run: pnpm tauri build --target ${{ matrix.target }} --bundles app
+      - name: Verify app identity and architecture
+        run: |
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' target/${{ matrix.target }}/release/bundle/macos/Resona.app/Contents/Info.plist
+          file target/${{ matrix.target }}/release/bundle/macos/Resona.app/Contents/MacOS/resona
+      - name: Archive development application
+        run: tar -czf target/${{ matrix.target }}/release/bundle/macos/Resona.app.tar.gz -C target/${{ matrix.target }}/release/bundle/macos Resona.app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: development-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+  dependencies:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: '1.95.0'
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - run: cargo install cargo-audit --version 0.22.1 --locked
+      - run: cargo audit
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level high
+  ci-success:
+    if: always()
+    needs: [frontend, core, desktop, dependencies]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 -c 'import json,os; assert all(j["result"] == "success" for j in json.loads(os.environ["RESULTS"]).values())'

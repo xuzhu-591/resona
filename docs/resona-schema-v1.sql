@@ -218,7 +218,7 @@ CREATE TABLE legacy_rows (
 INSERT INTO app_settings VALUES
   (1, 1, 0, 0, 'ttft', 1, 0, 'system', 'today', 0);
 INSERT INTO app_meta VALUES ('data_revision', '0');
-INSERT INTO app_meta VALUES ('parser_version', '"codex-claude-v1"');
+INSERT INTO app_meta VALUES ('parser_version', '"codex-claude-v2"');
 INSERT INTO app_meta VALUES ('metric_version', '"resona-v1"');
 INSERT INTO app_meta VALUES ('bootstrap_state', '"not_started"');
 INSERT INTO schema_migrations VALUES

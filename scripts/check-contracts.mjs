@@ -1,0 +1,14 @@
+import fs from "node:fs";
+import assert from "node:assert/strict";
+const json = JSON.parse(fs.readFileSync("package.json", "utf8"));
+const tauri = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
+const cargo = fs.readFileSync("Cargo.toml", "utf8");
+assert.equal(tauri.version, json.version);
+assert.ok(cargo.includes(`version = "${json.version}"`));
+assert.equal(json.private, true);
+const doc = fs.readFileSync("docs/technical-design.md", "utf8");
+const ddl = fs.readFileSync("docs/resona-schema-v1.sql", "utf8");
+assert.equal(doc.match(/```sql\n([\s\S]*?)```/)[1], ddl);
+assert.equal(tauri.identifier, "io.github.xuzhu-591.resona");
+assert.ok(!fs.readFileSync("src-tauri/capabilities/desktop.json", "utf8").includes("shell:"));
+console.log("Version, SQL and desktop contracts verified.");

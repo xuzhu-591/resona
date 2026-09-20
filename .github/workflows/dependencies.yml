@@ -1,0 +1,10 @@
+name: Dependency review
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
