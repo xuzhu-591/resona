@@ -37,26 +37,42 @@ pub fn trace(message: &str) {
     }
 }
 
+fn contains(point: (f64, f64), area: (f64, f64, f64, f64)) -> bool {
+    point.0 >= area.0 && point.0 < area.0 + area.2 && point.1 >= area.1 && point.1 < area.1 + area.3
+}
+
 fn bounds(tray: (f64, f64, f64, f64), area: (f64, f64, f64, f64)) -> (f64, f64, f64, f64) {
     let (left, top, width, height) = area;
     let margin = 8.0;
     let w = 500.0_f64.min((width - margin * 2.0).max(1.0));
-    let y = (tray.1 + tray.3 + margin)
-        .max(top + margin)
-        .min(top + height - margin - 1.0);
+    let y = (tray.1 + tray.3).max(top).min(top + height - margin - 1.0);
     let h = 780.0_f64.min((top + height - margin - y).max(1.0));
     let x = (tray.0 + tray.2 / 2.0 - w / 2.0).clamp(left + margin, left + width - w - margin);
     (x, y, w, h)
 }
 
 pub fn position_popover(window: &WebviewWindow, rect: Rect) -> tauri::Result<()> {
-    // Tray events carry physical desktop coordinates; preserve negative monitor origins.
+    // macOS monitor_from_point uses Core Graphics logical coordinates, while
+    // tray events and Monitor geometry are physical. Compare in one space.
     let point: PhysicalPosition<f64> = rect.position.to_physical(1.0);
-    let Some(monitor) = window.monitor_from_point(point.x, point.y)? else {
-        return Ok(());
-    };
+    let size: PhysicalSize<f64> = rect.size.to_physical(1.0);
+    let center = (point.x + size.width / 2.0, point.y + size.height / 2.0);
+    let monitor = window
+        .available_monitors()?
+        .into_iter()
+        .find(|monitor| {
+            contains(
+                center,
+                (
+                    monitor.position().x as f64,
+                    monitor.position().y as f64,
+                    monitor.size().width as f64,
+                    monitor.size().height as f64,
+                ),
+            )
+        })
+        .ok_or_else(|| tauri::Error::Io(std::io::Error::other("Tray monitor unavailable")))?;
     let scale = monitor.scale_factor();
-    let size: PhysicalSize<f64> = rect.size.to_physical(scale);
     let area = monitor.work_area();
     let (x, y, width, height) = bounds(
         (
@@ -78,14 +94,29 @@ pub fn position_popover(window: &WebviewWindow, rect: Rect) -> tauri::Result<()>
         (y * scale).round() as i32,
     ))?;
     trace(&format!(
-        "popover bounds={x},{y},{width},{height} scale={scale}"
+        "tray={point:?} size={size:?}; popover bounds={x},{y},{width},{height} scale={scale}; actual={:?}", window.outer_position()
     ));
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{bounds, PopoverState};
+    use super::{bounds, contains, PopoverState};
+    #[test]
+    fn retina_tray_uses_physical_monitor_geometry() {
+        // This point lies beyond the logical 1440px edge, but inside the 2x screen.
+        assert!(contains((2500., 25.), (0., 0., 2880., 1800.)));
+        assert!(!contains((2500., 25.), (0., 0., 1440., 900.)));
+        let (x, y, width, _) = bounds((1200., 0., 100., 25.), (0., 25., 1440., 875.));
+        assert_eq!(x + width / 2., 1182.); // right edge constraint
+        assert_eq!(y, 25.); // no gap below status item
+    }
+    #[test]
+    fn centers_below_tray_without_vertical_gap() {
+        let (x, y, width, _) = bounds((900., 0., 100., 25.), (0., 25., 1440., 875.));
+        assert_eq!((x + width / 2., y), (950., 25.));
+    }
+
     #[test]
     fn left_click_latches_intent_before_focus_changes() {
         let state = PopoverState::default();
@@ -104,14 +135,14 @@ mod tests {
     fn fits_below_menu_on_small_display() {
         assert_eq!(
             bounds((1200., 0., 100., 25.), (0., 25., 1440., 775.)),
-            (932., 33., 500., 759.)
+            (932., 25., 500., 767.)
         );
     }
     #[test]
     fn preserves_left_monitor_origin() {
         assert_eq!(
             bounds((-1400., 0., 100., 25.), (-1440., 25., 1440., 875.)),
-            (-1432., 33., 500., 780.)
+            (-1432., 25., 500., 780.)
         );
     }
     #[test]
