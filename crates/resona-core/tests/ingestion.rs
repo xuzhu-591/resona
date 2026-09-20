@@ -522,3 +522,41 @@ fn reducer_upgrade_rebuilds_existing_projection_from_retained_facts() {
     s.recover().unwrap();
     assert_eq!(revision, s.revision().unwrap());
 }
+
+#[test]
+fn reparsed_legacy_row_is_superseded_without_matching_another_provider() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut s = Store::open(&tmp.path().join("data"), tmp.path()).unwrap();
+    s.conn.execute_batch("INSERT INTO legacy_rows VALUES ('test','codex','A',NULL,'{}','turn:A','mapped',NULL); INSERT INTO legacy_rows VALUES ('test','claude','A',NULL,'{}','turn:A','mapped',NULL);").unwrap();
+    let active = tmp.path().join(".codex/sessions");
+    std::fs::create_dir_all(&active).unwrap();
+    std::fs::write(
+        active.join(format!("rollout-2026-09-20T00-00-00-{THREAD}.jsonl")),
+        logfile(),
+    )
+    .unwrap();
+    drain(&mut s);
+    for _ in 0..2 {
+        assert_eq!(
+            s.conn
+                .query_row(
+                    "SELECT state FROM legacy_rows WHERE provider='codex'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "superseded"
+        );
+        assert_eq!(
+            s.conn
+                .query_row(
+                    "SELECT state FROM legacy_rows WHERE provider='claude'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "mapped"
+        );
+        s.rebuild().unwrap();
+    }
+}

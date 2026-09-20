@@ -699,7 +699,7 @@ impl Store {
                 params![provider, id, REDUCER_VERSION],
             )?;
         }
-        tx.execute("UPDATE legacy_rows SET state='superseded' WHERE mapped_turn_key IN (SELECT turn_key FROM turns WHERE record_source='parsed' AND turns.provider=legacy_rows.provider)",[])?;
+        tx.execute("UPDATE legacy_rows SET state='superseded' WHERE state<>'superseded' AND EXISTS (SELECT 1 FROM turns WHERE turns.provider=legacy_rows.provider AND turns.turn_key=legacy_rows.mapped_turn_key AND record_source='parsed')",[])?;
         tx.execute(
             "UPDATE app_meta SET value_json=?1 WHERE key='data_revision'",
             [revision.to_string()],
