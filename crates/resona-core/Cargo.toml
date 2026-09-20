@@ -20,7 +20,7 @@ walkdir = "2"
 zstd = "0.13"
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
-dirs = "6"
+dirs = "7"
 ts-rs = { version = "11", features = ["no-serde-warnings"] }
 
 [dev-dependencies]
