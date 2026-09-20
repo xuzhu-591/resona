@@ -127,7 +127,17 @@ export function Chart({
             ? {
                 silent: true,
                 symbol: "none",
-                label: { show: false },
+                label: {
+                  show: true,
+                  position: "end",
+                  rotate: 0,
+                  align: "left",
+                  distance: 0,
+                  color: "#c4cad1",
+                  fontSize: 10,
+                  formatter: (p: { name: string; value: number }) =>
+                    `${p.name}\n${value(p.value)} ${metric === "ttft" ? "s" : "tok/s"}`,
+                },
                 lineStyle: { color: "#a6adb4", type: "dashed", width: 1 },
                 data: marks
                   .filter(([, n]) => n !== null)

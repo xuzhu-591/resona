@@ -12,7 +12,8 @@ use tauri_plugin_autostart::ManagerExt as AutoExt;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_positioner::{Position, WindowExt};
+mod popover;
+use popover::{position_popover, trace, PopoverState};
 
 type Shared = Arc<Mutex<Store>>;
 struct Stop(Arc<std::sync::atomic::AtomicBool>);
@@ -280,7 +281,6 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             let _ = show(app, "overview", serde_json::Value::Null);
         }))
-        .plugin(tauri_plugin_positioner::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent)
@@ -331,6 +331,7 @@ fn main() {
             app.manage(lock);
             let stopping = Arc::new(std::sync::atomic::AtomicBool::new(false));
             app.manage(Stop(stopping.clone()));
+            app.manage(PopoverState::default());
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             WebviewWindowBuilder::new(
@@ -362,7 +363,7 @@ fn main() {
                 WebviewUrl::App("index.html?view=settings".into()),
             )
             .title("Resona · 设置")
-            .inner_size(780.0, 670.0)
+            .inner_size(820.0, 790.0)
             .min_inner_size(680.0, 560.0)
             .visible(false)
             .build()?;
@@ -378,7 +379,6 @@ fn main() {
                 )
                 .title("—")
                 .tooltip("Resona · 感知每一次回响")
-                .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, e| match e.id.as_ref() {
                     "quit" => request_quit(app),
@@ -390,26 +390,44 @@ fn main() {
                     }
                     _ => {}
                 })
-                .on_tray_icon_event(|tray, event| {
-                    tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
-                    if matches!(
-                        event,
-                        TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
+                // No persistent NSStatusItem menu: AppKit must not consume left clicks.
+                .on_tray_icon_event(move |tray, event| {
+                    let TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        rect,
+                        ..
+                    } = event
+                    else {
+                        return;
+                    };
+                    trace(&format!("tray {button:?} {button_state:?}"));
+                    let app = tray.app_handle();
+                    let Some(window) = app.get_webview_window("popover") else {
+                        return;
+                    };
+                    let state = app.state::<PopoverState>();
+                    if button_state == MouseButtonState::Down {
+                        if button == MouseButton::Left {
+                            state.press(window.is_visible().unwrap_or(false));
                         }
-                    ) {
-                        if let Some(w) = tray.app_handle().get_webview_window("popover") {
-                            if w.is_visible().unwrap_or(false) {
-                                let _ = w.hide();
-                            } else {
-                                let _ = w.move_window(Position::TrayCenter);
-                                let _ = w.show();
-                                let _ = w.set_focus();
-                            }
-                        }
+                        return;
                     }
+                    let result = match button {
+                        MouseButton::Left => match state.release() {
+                            Some(true) => position_popover(&window, rect)
+                                .and_then(|()| window.show())
+                                .and_then(|()| window.set_focus()),
+                            Some(false) => window.hide(),
+                            None => Ok(()),
+                        },
+                        MouseButton::Right => window.hide().and_then(|()| window.popup_menu(&menu)),
+                        _ => Ok(()),
+                    };
+                    trace(&format!(
+                        "action {result:?}; visible={:?}",
+                        window.is_visible()
+                    ));
                 })
                 .build(app)?;
             let handle = app.handle().clone();
@@ -532,8 +550,12 @@ fn main() {
                 api.prevent_close();
                 let _ = window.hide();
             }
-            WindowEvent::Focused(false) if window.label() == "popover" => {
-                let _ = window.hide();
+            WindowEvent::Focused(focused) if window.label() == "popover" => {
+                trace(&format!("popover focused={focused}"));
+                if !focused && window.is_visible().unwrap_or(false) {
+                    window.app_handle().state::<PopoverState>().blur();
+                    let _ = window.hide();
+                }
             }
             _ => {}
         })

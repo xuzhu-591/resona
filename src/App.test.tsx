@@ -59,6 +59,38 @@ describe("desktop workflows with synthetic IPC data", () => {
     expect(screen.getByText(/archived_sessions/)).toBeTruthy();
     expect(screen.queryByLabelText(/存储位置/)).toBeNull();
   });
+  it("saves segmented menu settings and updates the preview", async () => {
+    window.history.replaceState({}, "", "/?view=settings");
+    const save = vi.spyOn(api, "save");
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "两项都显示" }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ menuMetric: "both" })),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "两项都显示" }).getAttribute("aria-pressed")).toBe(
+        "true",
+      ),
+    );
+    expect(screen.getByText(/7.8s · 21.2 tok\/s/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "数据来源" }));
+    fireEvent.click(screen.getByRole("button", { name: "通用" }));
+    expect(screen.getByRole("button", { name: "两项都显示" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
+  it("renders both popover distributions and passes its selected range to details", async () => {
+    window.history.replaceState({}, "", "/?view=popover");
+    const query = vi.spyOn(api, "dashboard");
+    render(<App />);
+    await waitFor(() => expect(screen.getAllByTestId("chart")).toHaveLength(2));
+    fireEvent.click(screen.getByRole("button", { name: "7 天" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    await screen.findByRole("heading", { name: "响应趋势" });
+    await waitFor(() =>
+      expect(query).toHaveBeenLastCalledWith(expect.objectContaining({ range: "7d" })),
+    );
+  });
   it("surfaces IPC failures instead of rendering a successful zero", async () => {
     vi.spyOn(api, "dashboard").mockRejectedValue(new Error("查询失败"));
     render(<App />);

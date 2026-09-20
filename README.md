@@ -1,10 +1,14 @@
 # Resona · 回响
 
+**English** | [简体中文](README.zh-CN.md)
+
+[![CI](https://github.com/xuzhu-591/resona/actions/workflows/ci.yml/badge.svg)](https://github.com/xuzhu-591/resona/actions/workflows/ci.yml)
+
 **Feel the rhythm of your AI conversations.**
 
 Resona is a local-first macOS menu bar app for understanding Codex and Claude Code response performance. It reads existing session logs, makes no model requests, and does not need an API key.
 
-[中文说明](docs/README.zh-CN.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
+[Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
 ![Resona menu bar with synthetic demo data](assets/screenshot-popover.png)
 
@@ -26,6 +30,15 @@ Signed public downloads are pending Apple Developer ID and notarization setup. Y
 Targets macOS 13 or later. When signed downloads are available, [Releases](https://github.com/xuzhu-591/resona/releases) will provide separate Apple Silicon (`aarch64`) and Intel (`x64`) builds. For a local source build, drag the generated `Resona.app` into Applications, then open it. Closing a window keeps collection running in the menu bar; use **Quit Resona** to stop it.
 
 Release notes state the signing/notarization and tested-platform status of each artifact. Source builds and development artifacts do not carry a production Developer ID signature.
+
+## Quick start
+
+1. Left-click the menu bar item to open the compact performance panel; click again or press Escape to dismiss it. Right-click for the app menu.
+2. Choose Today, 24 hours, or 7 days to update both distributions together.
+3. Open **View details** to carry those filters into the overview, or **View more** for turn history.
+4. In **Settings → Data sources**, choose your Codex home or Claude projects directory if you use a custom location. Codex active and archived directories are tracked together.
+
+The first history scan is incremental; source errors are shown without blocking other readable files.
 
 ## Data stays local
 
